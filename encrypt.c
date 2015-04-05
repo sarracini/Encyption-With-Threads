@@ -64,6 +64,7 @@ void *OUT_thread(void){
 }
 
 int main(int argc, char *argv[]){
+	int i;
 	// this doesn't actually go here i don't know where to put it yet
 	struct timespec t;
 	int seed = 0;
@@ -102,7 +103,7 @@ int main(int argc, char *argv[]){
 
 	// create as many in threads as user specified
 	for (i = 1; i < nIN; i++){
-		pthread_create(&INtheads[i], &attr, (void*) IN_thread, NULL;
+		pthread_create(&INtheads[i], &attr, (void*) IN_thread, NULL);
 	}
 	// create as many work threads as user specified
 	for (i = 1; i < nWORK; i++){
@@ -115,13 +116,13 @@ int main(int argc, char *argv[]){
 
 	// join all the threads
 	for (i = 1; i < nIN; i++){
-		pthread_join(&INtheads[i], NULL;
+		pthread_join(INtheads[i], NULL);
 	}
 	for (i = 1; i < nWORK; i++){
-		pthread_join(&WORKtheads[i], NULL);
+		pthread_join(WORKtheads[i], NULL);
 	}
 	for (i = 1; i < nOUT; i++){
-		pthread_join(&OUTtheads[i], NULL);
+		pthread_join(OUTtheads[i], NULL);
 	}
 
 	// destory all mutexes
