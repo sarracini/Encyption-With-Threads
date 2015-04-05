@@ -70,6 +70,7 @@ int main(int argc, char *argv[]){
 	int seed = 0;
 	t.tv_sec = 0;
 	t.tv_nsec = rand_r((unsigned int*)&seed)%(TEN_MILLIS_IN_NANOS+1);
+	nanosleep(&t, NULL);
 
 	// initialize all mutexes
 	pthread_mutex_init(&mutexIN, NULL);
@@ -92,10 +93,15 @@ int main(int argc, char *argv[]){
 	pthread_attr_t attr;
 	pthread_attr_init(&attr);
 
+	BufferItem *result = (BufferItem*)malloc(sizeof(BufferItem));
+
 	// reading in to file
 	if (!(file_in = fopen(infile, "r"))){
 		fprintf(stderr, "could not open input file for reading");
 	}
+
+	result->offset = ftell(file_in);
+
 	// writing to file
 	if (!(file_out = fopen(outfile, "w"))){
 		fprintf(stderr, "could not open output file for writing");
