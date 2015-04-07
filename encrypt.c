@@ -15,6 +15,7 @@ CS Login: cse13208
 
 #define TEN_MILLIS_IN_NANOS 10000000
 
+// some global variables
 int KEY;
 int bufSize;
 int nIN;
@@ -23,21 +24,31 @@ int nWORK;
 FILE *file_in;
 FILE *file_out;
 
+// mutex locks for threads
 pthread_mutex_t mutexIN;
 pthread_mutex_t mutexWORK;
 pthread_mutex_t mutexOUT;
 
+// single item character in buffer
 typedef struct{
 	char data;
 	off_t offset;
 	char state;
 } BufferItem;
 
+void thread_sleep(void){
+	struct timespec t;
+	int seed = 0;
+	t.tv_sec = 0;
+	t.tv_nsec = rand_r((unsigned int*)&seed)%(TEN_MILLIS_IN_NANOS+1);
+	nanosleep(&t, NULL);
+}
+
 void *IN_thread(void){
 
+	thread_sleep();
 	pthread_mutex_lock(&mutexIN);
 		// critical section for writing to buffer here
-
 	pthread_mutex_unlock(&mutexIN);
 	return NULL;
 
@@ -45,9 +56,9 @@ void *IN_thread(void){
 
 void *WORK_thread(void){
 	
+	thread_sleep();
 	pthread_mutex_lock(&mutexWORK);
 		// critical section for encrypting/decrypting here
-
 	pthread_mutex_unlock(&mutexWORK);
 	return NULL;
 
@@ -55,9 +66,9 @@ void *WORK_thread(void){
 
 void *OUT_thread(void){
 	
+	thread_sleep();
 	pthread_mutex_lock(&mutexOUT);
 		// critical section for reading from buffer and writing to file here
-
 	pthread_mutex_unlock(&mutexOUT);
 	return NULL;
 
@@ -65,12 +76,6 @@ void *OUT_thread(void){
 
 int main(int argc, char *argv[]){
 	int i;
-	// this doesn't actually go here i don't know where to put it yet
-	struct timespec t;
-	int seed = 0;
-	t.tv_sec = 0;
-	t.tv_nsec = rand_r((unsigned int*)&seed)%(TEN_MILLIS_IN_NANOS+1);
-	nanosleep(&t, NULL);
 
 	// initialize all mutexes
 	pthread_mutex_init(&mutexIN, NULL);
@@ -87,48 +92,56 @@ int main(int argc, char *argv[]){
 	bufSize = atoi(argv[6]);
 
 	// threads
-	pthread_t INtheads[nIN];
-	pthread_t OUTtheads[nOUT];
-	pthread_t WORKtheads[nWORK];
+	pthread_t INthreads[nIN];
+	pthread_t OUTthreads[nOUT];
+	pthread_t WORKthreads[nWORK];
 	pthread_attr_t attr;
 	pthread_attr_init(&attr);
 
 	BufferItem *result = (BufferItem*)malloc(sizeof(BufferItem));
 
-	// reading in to file
+	// reading in to file error handling
 	if (!(file_in = fopen(infile, "r"))){
 		fprintf(stderr, "could not open input file for reading");
 	}
 
 	result->offset = ftell(file_in);
+	result->data = fgetc(file_in);
 
-	// writing to file
+	// writing to file error handling
 	if (!(file_out = fopen(outfile, "w"))){
 		fprintf(stderr, "could not open output file for writing");
+	}
+	if (fseek(file_out, result->offset, SEEK_SET) == -1){
+		fprintf(stderr, "error setting output file position to %u\n", (unsigned int) result->offset);
+		exit(-1);
+	}
+	if (fputc(result->data, file_out) == EOF){
+		fprintf(stderr, "error writing byte %c to output file\n", result->data);
 	}
 
 	// create as many in threads as user specified
 	for (i = 1; i < nIN; i++){
-		pthread_create(&INtheads[i], &attr, (void*) IN_thread, NULL);
+		pthread_create(&INthreads[i], &attr, (void*) IN_thread, NULL);
 	}
 	// create as many work threads as user specified
 	for (i = 1; i < nWORK; i++){
-		pthread_create(&WORKtheads[i], &attr, (void*) WORK_thread, NULL);
+		pthread_create(&WORKthreads[i], &attr, (void*) WORK_thread, NULL);
 	}
 	// create as many out threads as user specified
 	for (i = 1; i < nOUT; i++){
-		pthread_create(&OUTtheads[i], &attr, (void*) OUT_thread, NULL);
+		pthread_create(&OUTthreads[i], &attr, (void*) OUT_thread, NULL);
 	}
 
 	// join all the threads
 	for (i = 1; i < nIN; i++){
-		pthread_join(INtheads[i], NULL);
+		pthread_join(INthreads[i], NULL);
 	}
 	for (i = 1; i < nWORK; i++){
-		pthread_join(WORKtheads[i], NULL);
+		pthread_join(WORKthreads[i], NULL);
 	}
 	for (i = 1; i < nOUT; i++){
-		pthread_join(OUTtheads[i], NULL);
+		pthread_join(OUTthreads[i], NULL);
 	}
 
 	// destory all mutexes
