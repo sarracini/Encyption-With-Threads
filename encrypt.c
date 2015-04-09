@@ -15,9 +15,10 @@ CS Login: cse13208
 
 #define TEN_MILLIS_IN_NANOS 10000000
 /* to do:
- -init buffer -> set states to empty
- -functions to retrieve states of buffer
+ -finish in thread work
+ -do out thread work 
  -ALL the error handling
+ -test test test
 */
 // some global variables
 volatile int nIN = 0;
