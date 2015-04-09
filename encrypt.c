@@ -14,13 +14,17 @@ CS Login: cse13208
 #include <time.h>
 
 #define TEN_MILLIS_IN_NANOS 10000000
-
+/* to do:
+ -init buffer -> set states to empty
+ -functions to retrieve states of buffer
+ -ALL the error handling
+*/
 // some global variables
-int KEY;
-int bufSize;
-int nIN;
-int nOUT;
-int nWORK; 
+volatile int nIN = 0;
+volatile int nOUT = 0;
+volatile int nWORK = 0; 
+void *KEY;
+int bufSize = 0;
 FILE *file_in;
 FILE *file_out;
 
@@ -36,6 +40,8 @@ typedef struct{
 	char state;
 } BufferItem;
 
+BufferItem *result;
+
 void thread_sleep(void){
 	struct timespec t;
 	int seed = 0;
@@ -44,21 +50,54 @@ void thread_sleep(void){
 	nanosleep(&t, NULL);
 }
 
+int is_buffer_empty(){
+	int i = 0;
+	while (i < bufSize){
+		if(result[i].state != 'e'){
+			return 0;
+		}
+		i++;
+	}
+	return 1;
+}
+
+void initialize_buffer(){
+	int i = 0;
+	while (i < bufSize){
+		result[i].state = 'e';
+		i++;
+	}
+}
+
 void *IN_thread(void){
 
 	thread_sleep();
 	pthread_mutex_lock(&mutexIN);
-		// critical section for writing to buffer here
+		// critical section for reading in file
 	pthread_mutex_unlock(&mutexIN);
+
+	pthread_mutex_lock(&mutexWORK);
+		// critical section for writing to buffer
+	pthread_mutex_unlock(&mutexWORK);
 	return NULL;
 
 }
 
-void *WORK_thread(void){
+void *WORK_thread(void *param){
+	int index = 0;
+	int key = (int)param;
 	
+	char curr = result[index].data;
+
 	thread_sleep();
 	pthread_mutex_lock(&mutexWORK);
 		// critical section for encrypting/decrypting here
+	if (key >= 0 && curr > 31 && curr < 127){
+		curr = (((int)curr-32)+2*95+key)%95+32;
+	}
+	else if (key < 0 && curr > 31 && curr < 127){
+		curr = (((int)curr-32)+2*95-key)%95+32;
+	}
 	pthread_mutex_unlock(&mutexWORK);
 	return NULL;
 
@@ -67,15 +106,19 @@ void *WORK_thread(void){
 void *OUT_thread(void){
 	
 	thread_sleep();
+	pthread_mutex_lock(&mutexWORK);
+		//critical section for reading from buffer
+	pthread_mutex_unlock(&mutexWORK);
+
 	pthread_mutex_lock(&mutexOUT);
-		// critical section for reading from buffer and writing to file here
+		// critical section for writing to file here
 	pthread_mutex_unlock(&mutexOUT);
 	return NULL;
 
 }
 
 int main(int argc, char *argv[]){
-	int i;
+	int i = 0;
 
 	// initialize all mutexes
 	pthread_mutex_init(&mutexIN, NULL);
@@ -83,13 +126,13 @@ int main(int argc, char *argv[]){
 	pthread_mutex_init(&mutexOUT, NULL);
 
 	// read in arguments
-	char *infile = argv[4];
-	char *outfile = argv[5];
-	KEY = atoi(argv[0]);
-	nIN = atoi(argv[1]);
-	nWORK = atoi(argv[2]);
-	nOUT = atoi(argv[3]);
-	bufSize = atoi(argv[6]);
+	file_in = fopen(argv[5], "r");
+	file_out = fopen(argv[6], "w");
+	KEY = argv[1];
+	nIN = atoi(argv[2]);
+	nWORK = atoi(argv[3]);
+	nOUT = atoi(argv[4]);
+	bufSize = atoi(argv[7]);
 
 	// threads
 	pthread_t INthreads[nIN];
@@ -98,39 +141,25 @@ int main(int argc, char *argv[]){
 	pthread_attr_t attr;
 	pthread_attr_init(&attr);
 
-	BufferItem *result = (BufferItem*)malloc(sizeof(BufferItem));
+	result = (BufferItem*)malloc(sizeof(BufferItem));
 
-	// reading in to file error handling
-	if (!(file_in = fopen(infile, "r"))){
-		fprintf(stderr, "could not open input file for reading");
-	}
-
-	result->offset = ftell(file_in);
-	result->data = fgetc(file_in);
-
-	// writing to file error handling
-	if (!(file_out = fopen(outfile, "w"))){
-		fprintf(stderr, "could not open output file for writing");
-	}
-	if (fseek(file_out, result->offset, SEEK_SET) == -1){
-		fprintf(stderr, "error setting output file position to %u\n", (unsigned int) result->offset);
+	// check that the key is valid
+	int keyCheck = atoi(KEY);
+	if (keyCheck > 127 || keyCheck < -127 ) {
+		fprintf(stderr, "enter a valid integer as the key");
 		exit(-1);
 	}
-	if (fputc(result->data, file_out) == EOF){
-		fprintf(stderr, "error writing byte %c to output file\n", result->data);
-	}
-
 	// create as many in threads as user specified
 	for (i = 1; i < nIN; i++){
-		pthread_create(&INthreads[i], &attr, (void*) IN_thread, NULL);
+		pthread_create(&INthreads[i], &attr, (void *) IN_thread, NULL);
 	}
 	// create as many work threads as user specified
 	for (i = 1; i < nWORK; i++){
-		pthread_create(&WORKthreads[i], &attr, (void*) WORK_thread, NULL);
+		pthread_create(&WORKthreads[i], &attr, (void *) WORK_thread, KEY);
 	}
 	// create as many out threads as user specified
 	for (i = 1; i < nOUT; i++){
-		pthread_create(&OUTthreads[i], &attr, (void*) OUT_thread, NULL);
+		pthread_create(&OUTthreads[i], &attr, (void *) OUT_thread, NULL);
 	}
 
 	// join all the threads
@@ -149,5 +178,7 @@ int main(int argc, char *argv[]){
 	pthread_mutex_destroy(&mutexOUT);
 	pthread_mutex_destroy(&mutexWORK);
 
+	fclose(file_in);
+	fclose(file_out);
 	return 0;
 }
