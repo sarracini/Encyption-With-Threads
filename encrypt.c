@@ -105,13 +105,26 @@ void initialize_buffer(){
 	}
 }
 
-void *IN_thread(void){
+void valid_input(int param, int expected, char* msg){
+	if (param < expected){
+		fprintf(stderr, "%s\n", msg);
+		exit(-1);
+	}
+}
+
+void valid_key(int param, char* msg){
+	if (param > 127 || param < -127){
+		fprintf(stderr, "%s\n", msg);
+	}
+}
+
+void *IN_thread(void *param){
 	int index = 0;
 
 	thread_sleep();
 
 	while (!feof(file_in)){
-
+		// if buffer is empty, sleep and try again after some time
 		if (is_buffer_empty() == 1){
 			thread_sleep();
 		}
@@ -120,22 +133,25 @@ void *IN_thread(void){
 		index = first_empty_item_in_buffer();
 
 		if (index != 1){
+			// retrieve offset and data from file
 			off_t off = ftell(file_in);
 			char curr = fgetc(file_in);
 			pthread_mutex_unlock(&mutexIN);
 
+			// if reached end of file, produce and error
 			if (curr == EOF || curr == '\0'){
 				fprintf(stderr, "error while reading file");
 				break;
 			}
 
-			// critical section for writing to buffer
+			// critical section for writing characer to buffer
 			pthread_mutex_lock(&mutexWORK);
 			result[index].offset = off;
 			result[index].data = curr;
 			result[index].state = 'w';
 			index = first_empty_item_in_buffer();
 			pthread_mutex_unlock(&mutexWORK);
+			thread_sleep();
 		}
 	}
 	
@@ -181,7 +197,7 @@ void *WORK_thread(void *param){
 
 }
 
-void *OUT_thread(void){
+void *OUT_thread(void *param){
 	
 	thread_sleep();
 	pthread_mutex_lock(&mutexWORK);
@@ -219,25 +235,28 @@ int main(int argc, char *argv[]){
 	pthread_attr_t attr;
 	pthread_attr_init(&attr);
 
+	// create a buffer item and initialize the buffer
 	result = (BufferItem*)malloc(sizeof(BufferItem));
+	initialize_buffer();
 
-	// check that the key is valid
+	// error handling for user input
 	int keyCheck = atoi(KEY);
-	if (keyCheck > 127 || keyCheck < -127 ) {
-		fprintf(stderr, "enter a valid integer as the key");
-		exit(-1);
-	}
-	// create as many in threads as user specified
+	valid_key(keyCheck, "enter a valid integer as the key");
+	valid_input(nIN, 1, "number of in threads should be at least 1");
+	valid_input(nOUT, 1, "number of out threads should be at least 1");
+	valid_input(nWORK, 1, "number of work threads should be at least 1");
+	valid_input(bufSize, 1, "buffer size should be at least 1");
+	valid_input(argc, 8, "follow this format: encrypt <KEY> <nIN> <nWORK> <nOUT> <file_in> <file_out> <bufSize>");
+	
+	// create as many in/work/out threads as user specified
 	for (i = 1; i < nIN; i++){
-		pthread_create(&INthreads[i], &attr, (void *) IN_thread, NULL);
+		pthread_create(&INthreads[i], &attr, (void *) IN_thread, file_in);
 	}
-	// create as many work threads as user specified
 	for (i = 1; i < nWORK; i++){
 		pthread_create(&WORKthreads[i], &attr, (void *) WORK_thread, KEY);
 	}
-	// create as many out threads as user specified
 	for (i = 1; i < nOUT; i++){
-		pthread_create(&OUTthreads[i], &attr, (void *) OUT_thread, NULL);
+		pthread_create(&OUTthreads[i], &attr, (void *) OUT_thread, file_out);
 	}
 
 	// join all the threads
@@ -256,7 +275,9 @@ int main(int argc, char *argv[]){
 	pthread_mutex_destroy(&mutexOUT);
 	pthread_mutex_destroy(&mutexWORK);
 
+	// close all files
 	fclose(file_in);
 	fclose(file_out);
+
 	return 0;
 }
