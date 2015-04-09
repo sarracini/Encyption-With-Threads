@@ -61,6 +61,41 @@ int is_buffer_empty(){
 	return 1;
 }
 
+int first_empty_item_in_buffer(){
+	if (is_buffer_empty() == 0){
+		int i = 0;
+		while (i < bufSize){
+			if (result[i].state == 'e'){
+				return i;
+			}
+			return i++;
+		}
+	}
+	return -1;
+}
+
+int first_work_item_in_buffer(){
+	int i = 0;
+	while (i < bufSize){
+		if (result[i].state == 'w'){
+			return i;
+		}
+		return i++;
+	}
+	return -1;
+}
+
+int first_out_item_in_buffer(){
+	int i = 0;
+	while (i < bufSize){
+		if (result[i].state == 'o'){
+			return i;
+		}
+		return i++;
+	}
+	return -1;
+}
+
 void initialize_buffer(){
 	int i = 0;
 	while (i < bufSize){
@@ -70,15 +105,39 @@ void initialize_buffer(){
 }
 
 void *IN_thread(void){
+	int index = 0;
 
 	thread_sleep();
-	pthread_mutex_lock(&mutexIN);
-		// critical section for reading in file
-	pthread_mutex_unlock(&mutexIN);
 
-	pthread_mutex_lock(&mutexWORK);
-		// critical section for writing to buffer
-	pthread_mutex_unlock(&mutexWORK);
+	while (!feof(file_in)){
+
+		if (is_buffer_empty() == 1){
+			thread_sleep();
+		}
+		// critical section to read in file 
+		pthread_mutex_lock(&mutexIN);
+		index = first_empty_item_in_buffer();
+
+		if (index != 1){
+			off_t off = ftell(file_in);
+			char curr = fgetc(file_in);
+			pthread_mutex_unlock(&mutexIN);
+
+			if (curr == EOF || curr == '\0'){
+				fprintf(stderr, "error while reading file");
+				break;
+			}
+
+			// critical section for writing to buffer
+			pthread_mutex_lock(&mutexWORK);
+			result[index].offset = off;
+			result[index].data = curr;
+			result[index].state = 'w';
+			index = first_empty_item_in_buffer();
+			pthread_mutex_unlock(&mutexWORK);
+		}
+	}
+	
 	return NULL;
 
 }
@@ -86,19 +145,37 @@ void *IN_thread(void){
 void *WORK_thread(void *param){
 	int index = 0;
 	int key = (int)param;
-	
-	char curr = result[index].data;
 
 	thread_sleep();
+	
+	// critical section to read from buffer and save current character
 	pthread_mutex_lock(&mutexWORK);
-		// critical section for encrypting/decrypting here
-	if (key >= 0 && curr > 31 && curr < 127){
-		curr = (((int)curr-32)+2*95+key)%95+32;
-	}
-	else if (key < 0 && curr > 31 && curr < 127){
-		curr = (((int)curr-32)+2*95-key)%95+32;
-	}
+	index = first_work_item_in_buffer();
+	char curr = result[index].data;
 	pthread_mutex_unlock(&mutexWORK);
+	
+	// encrypting/decrypting file if there is work to be done and buffer is non-empty
+	while (index != -1 || is_buffer_empty() == 0){
+		if (key >= 0 && curr > 31 && curr < 127){
+				curr = (((int)curr-32)+2*95+key)%95+32;
+		}
+		else if (key < 0 && curr > 31 && curr < 127){
+			curr = (((int)curr-32)+2*95-key)%95+32;
+		}
+		// if buffer is empty, sleep and try again after some time
+		if (is_buffer_empty() == 1){
+			thread_sleep();
+		}
+		
+		// critical section to write encrypted character back to buffer, change state and grab next work byte
+		pthread_mutex_lock(&mutexWORK);
+		result[index].data = curr;
+		result[index].state = 'o';
+		index = first_work_item_in_buffer();
+		pthread_mutex_unlock(&mutexWORK);
+		thread_sleep();
+	}
+	
 	return NULL;
 
 }
