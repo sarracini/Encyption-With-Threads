@@ -50,7 +50,7 @@ void thread_sleep(void){
 int is_buffer_empty(){
 	int i = 0;
 	while (i < bufSize){
-		if(result[i].state == 'e'){
+		if (result[i].state == 'e'){
 			return 1;
 		}
 		i++;
@@ -136,7 +136,7 @@ void *IN_thread(void *param){
 		while (index > -1){
 
 			// if the buffer is empty - sleep
-			if (is_buffer_empty()) {
+			if (is_buffer_empty() == 1) {
 				thread_sleep();
 			}
 			
@@ -193,15 +193,15 @@ void *WORK_thread(void *param){
 			curr = result[index].data;
 			
 			// if the buffer is empty - sleep
-			if (is_buffer_empty()) {
+			if (is_buffer_empty() == 1) {
 				thread_sleep();
 			}
 			
-			if (curr == EOF){
+			if (curr == EOF || curr == '\0'){
 				break;
 			}
 			
-			// encrypting/decrypting the single current character
+			// encrypting/derypting the single current character
 			if (key >= 0 && curr > 31 && curr < 127){
 				curr = (((int)curr-32)+2*95+key)%95+32;
 			}
@@ -251,7 +251,7 @@ void *OUT_thread(void *param){
 			curr = result[index].data;
 
 			// if the buffer is empty - sleep
-			if (is_buffer_empty()) {
+			if (is_buffer_empty() == 1) {
 				thread_sleep();
 			}
 
@@ -324,6 +324,12 @@ int main(int argc, char *argv[]){
 	valid_input(nWORK, 1, "number of work threads should be at least 1");
 	valid_input(bufSize, 1, "buffer size should be at least 1");
 	valid_input(argc, 8, "follow this format: encrypt <KEY> <nIN> <nWORK> <nOUT> <file_in> <file_out> <bufSize>");
+	if (file_in == NULL){
+		fprintf(stderr, "could not open input file for reading\n");
+	}
+	if (file_out == NULL){
+		fprintf(stderr, "could not open input file for writing\n");
+	}
 	
 	// create as many in/work/out threads as user specified
 	for (i = 0; i < nIN; i++){
