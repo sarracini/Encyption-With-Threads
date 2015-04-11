@@ -62,14 +62,15 @@ int is_buffer_empty(){
 int first_empty_item_in_buffer(){
 	//int empty;
 	int i = 0;
-	//if (is_buffer_empty()){
+	if (is_buffer_empty()){
 		while (i < bufSize){
 			if (result[i].state == 'e'){
 				return i;
 			}
 			i++;
 		}
-		return -1;
+	}
+	return -1;
 }
 
 int first_work_item_in_buffer(){
@@ -125,9 +126,8 @@ void *IN_thread(void *param){
 	do{
 
 		pthread_mutex_lock(&mutexWORK);
-		index = first_empty_item_in_buffer();
-	//	pthread_mutex_unlock(&mutexWORK);
-			
+		index = first_empty_item_in_buffer();			
+		
 		while (index > -1){
 			
 			// critical section to read in file 
@@ -140,12 +140,10 @@ void *IN_thread(void *param){
 				break;
 			}
 			else{ 
-				//pthread_mutex_lock(&mutexWORK);
 				result[index].offset = offset;
 				result[index].data = curr;
 				result[index].state = 'w';
 				index = first_empty_item_in_buffer();
-				//pthread_mutex_unlock(&mutexWORK);
 			}
 
 		}
@@ -172,15 +170,12 @@ void *WORK_thread(void *param){
 
 		pthread_mutex_lock(&mutexWORK);
 		index = first_work_item_in_buffer();
-		//pthread_mutex_unlock(&mutexWORK);
 		//while(is_buffer_empty()) {
 		//	thread_sleep();
 		//}
 		if (index > -1){
 			
-			//pthread_mutex_lock(&mutexWORK);
 			curr = result[index].data;
-			//pthread_mutex_unlock(&mutexWORK);	
 
 			if (curr == EOF){
 				break;
@@ -193,16 +188,14 @@ void *WORK_thread(void *param){
 				curr = (((int)curr-32)+2*95-(-1*key))%95+32;
 			}
 			// critical section to write encrypted character back to buffer, change state and grab next work byte
-			//pthread_mutex_lock(&mutexWORK);
 			result[index].data = curr;
 			result[index].state = 'o';
-			//pthread_mutex_unlock(&mutexWORK);
 		}
 		
 		local_active_in = active_in;
 		pthread_mutex_unlock(&mutexWORK);
-		
-	}while (local_active_in > 0 || index > -1);
+
+	}while (index > -1 || local_active_in > 0);
 
 	pthread_mutex_lock(&mutexWORK);
 	active_work--;
@@ -223,13 +216,10 @@ void *OUT_thread(void *param){
 	do{
 		pthread_mutex_lock(&mutexWORK);
 		index = first_out_item_in_buffer();
-		//pthread_mutex_unlock(&mutexWORK);
 		
 		if (index > -1){
-			//pthread_mutex_lock(&mutexWORK);
 			offset = result[index].offset;
 			curr = result[index].data;
-			//pthread_mutex_unlock(&mutexWORK);
 
 			// critical section for writing to file 
 			pthread_mutex_lock(&mutexOUT);
@@ -244,16 +234,14 @@ void *OUT_thread(void *param){
 			pthread_mutex_unlock(&mutexOUT);
 
 			// critical section for writing to file 
-			//pthread_mutex_lock(&mutexWORK);
 			result[index].data = '\0';
 			result[index].state = 'e';
 			result[index].offset = 0;
-			//pthread_mutex_unlock(&mutexWORK);
 		}
 		local_active_work = active_work;
 		pthread_mutex_unlock(&mutexWORK);
 		thread_sleep();
-	}while (local_active_work > 0 || index > -1);
+	}while (index > -1 || local_active_work > 0);
 	
 	return NULL;
 }
