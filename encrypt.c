@@ -257,12 +257,12 @@ void *OUT_thread(void *param){
 
 			// critical section for writing to file 
 			pthread_mutex_lock(&mutexOUT);
-			if (fseek(file_out, result[index].offset, SEEK_SET) == -1) {
-    			fprintf(stderr, "error setting output file position to %u\n", (unsigned int) result[index].offset);
+			if (fseek(file_out, offset, SEEK_SET) == -1) {
+    			fprintf(stderr, "error setting output file position to %u\n", (unsigned int) offset);
     			exit(-1);
 			}
-			if (fputc(result[index].data, file_out) == EOF) {
-    			fprintf(stderr, "error writing byte %d to output file\n", result[index].data);
+			if (fputc(curr, file_out) == EOF) {
+    			fprintf(stderr, "error writing byte %d to output file\n", curr);
    				 exit(-1);
 			}
 			pthread_mutex_unlock(&mutexOUT);
