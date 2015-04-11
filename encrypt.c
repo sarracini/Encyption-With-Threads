@@ -15,7 +15,6 @@ CS Login: cse13208
 
 #define TEN_MILLIS_IN_NANOS 10000000
 /* to do:
- -do out thread work 
  -ALL the error handling
  -test test test
 */
@@ -23,6 +22,8 @@ CS Login: cse13208
 volatile int nIN = 0;
 volatile int nOUT = 0;
 volatile int nWORK = 0; 
+int active_in;
+int active_work;
 void *KEY;
 int bufSize = 0;
 FILE *file_in;
@@ -62,19 +63,19 @@ int is_buffer_empty(){
 }
 
 int first_empty_item_in_buffer(){
-	int first_empty;
+	int empty;
 	int i = 0;
 	if (is_buffer_empty()){
 		while (i < bufSize){
 			if (result[i].state == 'e'){
-				first_empty = i;
+				empty = i;
 			}
 			i++;
 		}
 	} else {
-		first_empty = -1;
+		empty = -1;
 	}
-	return first_empty;
+	return empty;
 }
 
 int first_work_item_in_buffer(){
@@ -122,66 +123,80 @@ void valid_key(int param, char* msg){
 
 void *IN_thread(void *param){
 	int index = 0;
+	char curr;
+	off_t offset;
 
 	thread_sleep();
-
+	
 	while (!feof(file_in)){
 
-		// critical section to read in file 
-		pthread_mutex_lock(&mutexIN);
-		off_t off = ftell(file_in);
-		char curr = fgetc(file_in);
-		pthread_mutex_unlock(&mutexIN);
-
-		// if reached end of file, produce and error
-		if (curr == EOF){
-			fprintf(stderr, "error while reading file");
-			break;
-		}
-
-		// critical section for writing characer to buffer
 		pthread_mutex_lock(&mutexWORK);
 		index = first_empty_item_in_buffer();
-		
-		// if buffer is empty, sleep and try again after some time
-		if (!is_buffer_empty()){
-			thread_sleep();
-		}
-		if (index != -1){ 
-			result[index].offset = off;
-			result[index].data = curr;
-			result[index].state = 'w';
-		}
 		pthread_mutex_unlock(&mutexWORK);
+			
+		while (index > -1){
+			
+			// critical section to read in file 
+			pthread_mutex_lock(&mutexIN);
+			offset = ftell(file_in);
+			curr = fgetc(file_in);
+			pthread_mutex_unlock(&mutexIN);
+
+			if (curr == EOF){
+				break;
+			}
+			else{ 
+				pthread_mutex_lock(&mutexWORK);
+				result[index].offset = offset;
+				result[index].data = curr;
+				result[index].state = 'w';
+				index = first_empty_item_in_buffer();
+				pthread_mutex_unlock(&mutexWORK);
+			}
+
+		}
 		thread_sleep();	
 	}
+
+	pthread_mutex_lock(&mutexWORK);
+	active_in--;
+	pthread_mutex_unlock(&mutexWORK);
+	
 	return NULL;
 }
 
 void *WORK_thread(void *param){
 	int index = 0;
-	int key = (int)param;
-	thread_sleep();
+	int local_active_in;
 	char curr;
+	int key = (int)param;
 	
-	// critical section to read from buffer and save current character
-	pthread_mutex_lock(&mutexWORK);
-	index = first_work_item_in_buffer();
-	curr = result[index].data;
-	printf("index: %d\n", index);
-	pthread_mutex_unlock(&mutexWORK);	
+	thread_sleep();
 
-		// encrypting/decrypting file if there is work to be done and buffer is non-empty
-		while (index != -1){
+	while (index > -1 || local_active_in > 0){
+
+		pthread_mutex_lock(&mutexWORK);
+		index = first_work_item_in_buffer();
+		pthread_mutex_unlock(&mutexWORK);
+		//while(is_buffer_empty()) {
+		//	thread_sleep();
+		//}
+		if (index > -1){
+			
+			pthread_mutex_lock(&mutexWORK);
+			curr = result[index].data;
+			pthread_mutex_unlock(&mutexWORK);	
+
+			if (curr == EOF){
+				break;
+			}
+			// encrypting/decrypting file if there is work to be done and buffer is non-empty
+
 			if (key >= 0 && curr > 31 && curr < 127){
 				curr = (((int)curr-32)+2*95+key)%95+32;
 			}
 			else if (key < 0 && curr > 31 && curr < 127){
 				curr = (((int)curr-32)+2*95-key)%95+32;
-			}
-			// if buffer is empty, sleep and try again after some time
-			if (is_buffer_empty()){
-				thread_sleep();
 			}
 			
 			// critical section to write encrypted character back to buffer, change state and grab next work byte
@@ -189,47 +204,66 @@ void *WORK_thread(void *param){
 			result[index].data = curr;
 			result[index].state = 'o';
 			pthread_mutex_unlock(&mutexWORK);
-			thread_sleep();
 		}
-	
-	return NULL;
+		
+		local_active_in = active_in;
+		
+	}
 
+	pthread_mutex_lock(&mutexWORK);
+	active_work--;
+	pthread_mutex_unlock(&mutexWORK);
+
+	return NULL;
 }
 
 void *OUT_thread(void *param){
 	int index = 0;
+	char curr;
+	off_t offset;
+	int local_active_work;
 
 	thread_sleep();
-	
-	while (!is_buffer_empty()){
-		//critical section for reading from buffer
+
+		
+	while (index > -1 || local_active_work > 0){
 		pthread_mutex_lock(&mutexWORK);
 		index = first_out_item_in_buffer();
 		pthread_mutex_unlock(&mutexWORK);
 		
-		// critical section for writing to file 
-		pthread_mutex_lock(&mutexOUT);
-		if (!feof(file_out)) {
-   			fprintf(stderr, "could not open output file for writing");
-		}
-		if (fseek(file_out, result[index].offset, SEEK_SET) == -1) {
-    		fprintf(stderr, "error setting output file position to %u\n", (unsigned int) result[index].offset);
-    		exit(-1);
-		}
-		if (fputc(result[index].data, file_out) == EOF) {
-    		fprintf(stderr, "error writing byte %d to output file\n", result[index].data);
-   			 exit(-1);
-		}
-		pthread_mutex_unlock(&mutexOUT);
+		if (index > -1){
+			pthread_mutex_lock(&mutexWORK);
+			offset = result[index].offset;
+			curr = result[index].data;
+			pthread_mutex_unlock(&mutexWORK);
 
-		// critical section for writing to file 
-		pthread_mutex_lock(&mutexWORK);
-		result[index].data = '\0';
-		result[index].state = 'e';
-		result[index].offset = 0;
-		pthread_mutex_unlock(&mutexWORK);
+			// critical section for writing to file 
+			pthread_mutex_lock(&mutexOUT);
+			if (feof(file_out)) {
+   				fprintf(stderr, "could not open output file for writing\n");
+			}
+			if (fseek(file_out, result[index].offset, SEEK_SET) == -1) {
+    			fprintf(stderr, "error setting output file position to %u\n", (unsigned int) result[index].offset);
+    			exit(-1);
+			}
+			if (fputc(result[index].data, file_out) == EOF) {
+    			fprintf(stderr, "error writing byte %d to output file\n", result[index].data);
+   				 exit(-1);
+			}
+			pthread_mutex_unlock(&mutexOUT);
+
+			// critical section for writing to file 
+			pthread_mutex_lock(&mutexWORK);
+			result[index].data = '\0';
+			result[index].state = 'e';
+			result[index].offset = 0;
+			pthread_mutex_unlock(&mutexWORK);
+		}
+		local_active_work = active_work;
+
+		thread_sleep();
 	}
-
+	
 	return NULL;
 }
 
@@ -249,6 +283,9 @@ int main(int argc, char *argv[]){
 	nWORK = atoi(argv[3]);
 	nOUT = atoi(argv[4]);
 	bufSize = atoi(argv[7]);
+
+	active_in = nIN;
+	active_work = nWORK;
 
 	// threads
 	pthread_t INthreads[nIN];
@@ -271,24 +308,24 @@ int main(int argc, char *argv[]){
 	valid_input(argc, 8, "follow this format: encrypt <KEY> <nIN> <nWORK> <nOUT> <file_in> <file_out> <bufSize>");
 	
 	// create as many in/work/out threads as user specified
-	for (i = 1; i < nIN; i++){
+	for (i = 0; i < nIN; i++){
 		pthread_create(&INthreads[i], &attr, (void *) IN_thread, file_in);
 	}
-	for (i = 1; i < nWORK; i++){
+	for (i = 0; i < nWORK; i++){
 		pthread_create(&WORKthreads[i], &attr, (void *) WORK_thread, KEY);
 	}
-	for (i = 1; i < nOUT; i++){
+	for (i = 0; i < nOUT; i++){
 		pthread_create(&OUTthreads[i], &attr, (void *) OUT_thread, file_out);
 	}
 
 	// join all the threads
-	for (i = 1; i < nIN; i++){
+	for (i = 0; i < nIN; i++){
 		pthread_join(INthreads[i], NULL);
 	}
-	for (i = 1; i < nWORK; i++){
+	for (i = 0; i < nWORK; i++){
 		pthread_join(WORKthreads[i], NULL);
 	}
-	for (i = 1; i < nOUT; i++){
+	for (i = 0; i < nOUT; i++){
 		pthread_join(OUTthreads[i], NULL);
 	}
 
@@ -300,6 +337,7 @@ int main(int argc, char *argv[]){
 	// close all files
 	fclose(file_in);
 	fclose(file_out);
+	free(result);
 
 	return 0;
 }
