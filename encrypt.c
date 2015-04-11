@@ -19,9 +19,6 @@ CS Login: cse13208
  -test test test
 */
 // some global variables
-volatile int nIN = 0;
-volatile int nOUT = 0;
-volatile int nWORK = 0; 
 int active_in;
 int active_work;
 void *KEY;
@@ -63,19 +60,16 @@ int is_buffer_empty(){
 }
 
 int first_empty_item_in_buffer(){
-	int empty;
+	//int empty;
 	int i = 0;
-	if (is_buffer_empty()){
+	//if (is_buffer_empty()){
 		while (i < bufSize){
 			if (result[i].state == 'e'){
-				empty = i;
+				return i;
 			}
 			i++;
 		}
-	} else {
-		empty = -1;
-	}
-	return empty;
+		return -1;
 }
 
 int first_work_item_in_buffer(){
@@ -122,17 +116,17 @@ void valid_key(int param, char* msg){
 }
 
 void *IN_thread(void *param){
-	int index = 0;
+	int index;
 	char curr;
 	off_t offset;
 
 	thread_sleep();
 	
-	while (!feof(file_in)){
+	do{
 
 		pthread_mutex_lock(&mutexWORK);
 		index = first_empty_item_in_buffer();
-		pthread_mutex_unlock(&mutexWORK);
+	//	pthread_mutex_unlock(&mutexWORK);
 			
 		while (index > -1){
 			
@@ -146,17 +140,18 @@ void *IN_thread(void *param){
 				break;
 			}
 			else{ 
-				pthread_mutex_lock(&mutexWORK);
+				//pthread_mutex_lock(&mutexWORK);
 				result[index].offset = offset;
 				result[index].data = curr;
 				result[index].state = 'w';
 				index = first_empty_item_in_buffer();
-				pthread_mutex_unlock(&mutexWORK);
+				//pthread_mutex_unlock(&mutexWORK);
 			}
 
 		}
+		pthread_mutex_unlock(&mutexWORK);
 		thread_sleep();	
-	}
+	}while (!feof(file_in));
 
 	pthread_mutex_lock(&mutexWORK);
 	active_in--;
@@ -169,46 +164,45 @@ void *WORK_thread(void *param){
 	int index = 0;
 	int local_active_in;
 	char curr;
-	int key = (int)param;
+	int key = atoi(param);
 	
 	thread_sleep();
 
-	while (index > -1 || local_active_in > 0){
+	do{
 
 		pthread_mutex_lock(&mutexWORK);
 		index = first_work_item_in_buffer();
-		pthread_mutex_unlock(&mutexWORK);
+		//pthread_mutex_unlock(&mutexWORK);
 		//while(is_buffer_empty()) {
 		//	thread_sleep();
 		//}
 		if (index > -1){
 			
-			pthread_mutex_lock(&mutexWORK);
+			//pthread_mutex_lock(&mutexWORK);
 			curr = result[index].data;
-			pthread_mutex_unlock(&mutexWORK);	
+			//pthread_mutex_unlock(&mutexWORK);	
 
 			if (curr == EOF){
 				break;
 			}
 			// encrypting/decrypting file if there is work to be done and buffer is non-empty
-
 			if (key >= 0 && curr > 31 && curr < 127){
 				curr = (((int)curr-32)+2*95+key)%95+32;
 			}
 			else if (key < 0 && curr > 31 && curr < 127){
-				curr = (((int)curr-32)+2*95-key)%95+32;
+				curr = (((int)curr-32)+2*95-(-1*key))%95+32;
 			}
-			
 			// critical section to write encrypted character back to buffer, change state and grab next work byte
-			pthread_mutex_lock(&mutexWORK);
+			//pthread_mutex_lock(&mutexWORK);
 			result[index].data = curr;
 			result[index].state = 'o';
-			pthread_mutex_unlock(&mutexWORK);
+			//pthread_mutex_unlock(&mutexWORK);
 		}
 		
 		local_active_in = active_in;
+		pthread_mutex_unlock(&mutexWORK);
 		
-	}
+	}while (local_active_in > 0 || index > -1);
 
 	pthread_mutex_lock(&mutexWORK);
 	active_work--;
@@ -226,22 +220,19 @@ void *OUT_thread(void *param){
 	thread_sleep();
 
 		
-	while (index > -1 || local_active_work > 0){
+	do{
 		pthread_mutex_lock(&mutexWORK);
 		index = first_out_item_in_buffer();
-		pthread_mutex_unlock(&mutexWORK);
+		//pthread_mutex_unlock(&mutexWORK);
 		
 		if (index > -1){
-			pthread_mutex_lock(&mutexWORK);
+			//pthread_mutex_lock(&mutexWORK);
 			offset = result[index].offset;
 			curr = result[index].data;
-			pthread_mutex_unlock(&mutexWORK);
+			//pthread_mutex_unlock(&mutexWORK);
 
 			// critical section for writing to file 
 			pthread_mutex_lock(&mutexOUT);
-			if (feof(file_out)) {
-   				fprintf(stderr, "could not open output file for writing\n");
-			}
 			if (fseek(file_out, result[index].offset, SEEK_SET) == -1) {
     			fprintf(stderr, "error setting output file position to %u\n", (unsigned int) result[index].offset);
     			exit(-1);
@@ -253,23 +244,25 @@ void *OUT_thread(void *param){
 			pthread_mutex_unlock(&mutexOUT);
 
 			// critical section for writing to file 
-			pthread_mutex_lock(&mutexWORK);
+			//pthread_mutex_lock(&mutexWORK);
 			result[index].data = '\0';
 			result[index].state = 'e';
 			result[index].offset = 0;
-			pthread_mutex_unlock(&mutexWORK);
+			//pthread_mutex_unlock(&mutexWORK);
 		}
 		local_active_work = active_work;
-
+		pthread_mutex_unlock(&mutexWORK);
 		thread_sleep();
-	}
+	}while (local_active_work > 0 || index > -1);
 	
 	return NULL;
 }
 
 int main(int argc, char *argv[]){
 	int i = 0;
-
+	int nIN;
+	int nOUT;
+	int nWORK; 
 	// initialize all mutexes
 	pthread_mutex_init(&mutexIN, NULL);
 	pthread_mutex_init(&mutexWORK, NULL);
@@ -295,7 +288,7 @@ int main(int argc, char *argv[]){
 	pthread_attr_init(&attr);
 
 	// create a buffer item and initialize the buffer
-	result = (BufferItem*)malloc(sizeof(BufferItem));
+	result = (BufferItem*)malloc(sizeof(BufferItem)*bufSize);
 	initialize_buffer();
 
 	// error handling for user input
