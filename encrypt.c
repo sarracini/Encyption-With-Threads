@@ -14,10 +14,7 @@ CS Login: cse13208
 #include <time.h>
 
 #define TEN_MILLIS_IN_NANOS 10000000
-/* to do:
- -ALL the error handling
- -test test test
-*/
+
 // some global variables
 int active_in;
 int active_work;
@@ -40,6 +37,7 @@ typedef struct{
 
 BufferItem *result;
 
+// putting the thread to sleep for a random amount of time
 void thread_sleep(void){
 	struct timespec t;
 	int seed = 0;
@@ -48,6 +46,7 @@ void thread_sleep(void){
 	nanosleep(&t, NULL);
 }
 
+// check if the buffer is empty
 int is_buffer_empty(){
 	int i = 0;
 	while (i < bufSize){
@@ -59,8 +58,8 @@ int is_buffer_empty(){
 	return 0;
 }
 
+// return the first empty item in the buffer
 int first_empty_item_in_buffer(){
-	//int empty;
 	int i = 0;
 	if (is_buffer_empty()){
 		while (i < bufSize){
@@ -73,6 +72,7 @@ int first_empty_item_in_buffer(){
 	return -1;
 }
 
+// return the first item that is ready to be worked on in the buffer
 int first_work_item_in_buffer(){
 	int i = 0;
 	while (i < bufSize){
@@ -84,6 +84,7 @@ int first_work_item_in_buffer(){
 	return -1;
 }
 
+// return the first encrypted item to be written to the file from the buffer
 int first_out_item_in_buffer(){
 	int i = 0;
 	while (i < bufSize){
@@ -95,6 +96,7 @@ int first_out_item_in_buffer(){
 	return -1;
 }
 
+// initialize the buffer - set all states to empty
 void initialize_buffer(){
 	int i = 0;
 	while (i < bufSize){
@@ -103,6 +105,7 @@ void initialize_buffer(){
 	}
 }
 
+// error handling for valid user input
 void valid_input(int param, int expected, char* msg){
 	if (param < expected){
 		fprintf(stderr, "%s\n", msg);
@@ -110,12 +113,14 @@ void valid_input(int param, int expected, char* msg){
 	}
 }
 
+// error handling for valid user key
 void valid_key(int param, char* msg){
 	if (param > 127 || param < -127){
 		fprintf(stderr, "%s\n", msg);
 	}
 }
 
+// the in thread - read from file and write to buffer
 void *IN_thread(void *param){
 	int index;
 	char curr;
@@ -123,18 +128,19 @@ void *IN_thread(void *param){
 
 	thread_sleep();
 	
-	do{
-
+	do {
+		// critical section for returning first empty item in buffer
 		pthread_mutex_lock(&mutexWORK);
 		index = first_empty_item_in_buffer();			
 
 		while (index > -1){
 
-			if(is_buffer_empty()) {
+			// if the buffer is empty - sleep
+			if (is_buffer_empty()) {
 				thread_sleep();
 			}
 			
-			// critical section to read in file 
+			// critical section to read in file and store character
 			pthread_mutex_lock(&mutexIN);
 			offset = ftell(file_in);
 			curr = fgetc(file_in);
@@ -143,18 +149,23 @@ void *IN_thread(void *param){
 			if (curr == EOF){
 				break;
 			}
+
 			else{ 
+				// store character to buffer and indicate that it is ready for work then grab next item
 				result[index].offset = offset;
 				result[index].data = curr;
 				result[index].state = 'w';
 				index = first_empty_item_in_buffer();
 			}
-
 		}
+
 		pthread_mutex_unlock(&mutexWORK);
-		thread_sleep();	
+
 	} while (!feof(file_in));
 
+	thread_sleep();	
+
+	// decrease the number of active in threads 
 	pthread_mutex_lock(&mutexWORK);
 	active_in--;
 	pthread_mutex_unlock(&mutexWORK);
@@ -162,6 +173,7 @@ void *IN_thread(void *param){
 	return NULL;
 }
 
+// the work thread - read from the buffer, encrypt the character and write back to buffer
 void *WORK_thread(void *param){
 	int index = 0;
 	int local_active_in;
@@ -170,30 +182,34 @@ void *WORK_thread(void *param){
 	
 	thread_sleep();
 
-	do{
-
+	do {
+		// critical section tp read in the first item ready to be encrypted
 		pthread_mutex_lock(&mutexWORK);
 		index = first_work_item_in_buffer();
 		
 		if (index > -1){
 			
+			// store that current item in the buffer
 			curr = result[index].data;
 			
-			if(is_buffer_empty()) {
+			// if the buffer is empty - sleep
+			if (is_buffer_empty()) {
 				thread_sleep();
 			}
 			
 			if (curr == EOF){
 				break;
 			}
-			// encrypting/decrypting file if there is work to be done and buffer is non-empty
+			
+			// encrypting/decrypting the single current character
 			if (key >= 0 && curr > 31 && curr < 127){
 				curr = (((int)curr-32)+2*95+key)%95+32;
 			}
 			else if (key < 0 && curr > 31 && curr < 127){
 				curr = (((int)curr-32)+2*95-(-1*key))%95+32;
 			}
-			// critical section to write encrypted character back to buffer, change state and grab next work byte
+
+			// write encrypted character back to buffer, indicate it's ready to be outputted
 			result[index].data = curr;
 			result[index].state = 'o';
 		}
@@ -203,6 +219,9 @@ void *WORK_thread(void *param){
 
 	} while (index > -1 || local_active_in > 0);
 
+	thread_sleep();	
+
+	// decrease the number of active work threads
 	pthread_mutex_lock(&mutexWORK);
 	active_work--;
 	pthread_mutex_unlock(&mutexWORK);
@@ -210,6 +229,7 @@ void *WORK_thread(void *param){
 	return NULL;
 }
 
+// the output thread - read from buffer and write to file
 void *OUT_thread(void *param){
 	int index = 0;
 	char curr;
@@ -218,20 +238,23 @@ void *OUT_thread(void *param){
 
 	thread_sleep();
 
-		
-	do{
+	do {
 
+		// critical section to read in the first item to be outputted
 		pthread_mutex_lock(&mutexWORK);
 		index = first_out_item_in_buffer();
 
 		if (index > -1){
+
+			// store that current character 
 			offset = result[index].offset;
 			curr = result[index].data;
 
-
-			if(is_buffer_empty()) {
+			// if the buffer is empty - sleep
+			if (is_buffer_empty()) {
 				thread_sleep();
 			}
+
 			// critical section for writing to file 
 			pthread_mutex_lock(&mutexOUT);
 			if (fseek(file_out, result[index].offset, SEEK_SET) == -1) {
@@ -244,15 +267,18 @@ void *OUT_thread(void *param){
 			}
 			pthread_mutex_unlock(&mutexOUT);
 
-			// critical section for writing to file 
+			// store empty character to buffer and indicate that it is empty
 			result[index].data = '\0';
 			result[index].state = 'e';
 			result[index].offset = 0;
 		}
+
 		local_active_work = active_work;
 		pthread_mutex_unlock(&mutexWORK);
-		thread_sleep();
-	}while (index > -1 || local_active_work > 0);
+	
+	} while (index > -1 || local_active_work > 0);
+	
+	thread_sleep();
 	
 	return NULL;
 }
@@ -262,6 +288,7 @@ int main(int argc, char *argv[]){
 	int nIN;
 	int nOUT;
 	int nWORK; 
+	
 	// initialize all mutexes
 	pthread_mutex_init(&mutexIN, NULL);
 	pthread_mutex_init(&mutexWORK, NULL);
@@ -275,7 +302,6 @@ int main(int argc, char *argv[]){
 	nWORK = atoi(argv[3]);
 	nOUT = atoi(argv[4]);
 	bufSize = atoi(argv[7]);
-
 	active_in = nIN;
 	active_work = nWORK;
 
@@ -326,7 +352,7 @@ int main(int argc, char *argv[]){
 	pthread_mutex_destroy(&mutexOUT);
 	pthread_mutex_destroy(&mutexWORK);
 
-	// close all files
+	// close all files and free buffer
 	fclose(file_in);
 	fclose(file_out);
 	free(result);
