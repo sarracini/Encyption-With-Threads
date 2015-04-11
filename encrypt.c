@@ -127,8 +127,12 @@ void *IN_thread(void *param){
 
 		pthread_mutex_lock(&mutexWORK);
 		index = first_empty_item_in_buffer();			
-		
+
 		while (index > -1){
+
+			if(is_buffer_empty()) {
+				thread_sleep();
+			}
 			
 			// critical section to read in file 
 			pthread_mutex_lock(&mutexIN);
@@ -149,7 +153,7 @@ void *IN_thread(void *param){
 		}
 		pthread_mutex_unlock(&mutexWORK);
 		thread_sleep();	
-	}while (!feof(file_in));
+	} while (!feof(file_in));
 
 	pthread_mutex_lock(&mutexWORK);
 	active_in--;
@@ -170,13 +174,15 @@ void *WORK_thread(void *param){
 
 		pthread_mutex_lock(&mutexWORK);
 		index = first_work_item_in_buffer();
-		//while(is_buffer_empty()) {
-		//	thread_sleep();
-		//}
+		
 		if (index > -1){
 			
 			curr = result[index].data;
-
+			
+			if(is_buffer_empty()) {
+				thread_sleep();
+			}
+			
 			if (curr == EOF){
 				break;
 			}
@@ -195,7 +201,7 @@ void *WORK_thread(void *param){
 		local_active_in = active_in;
 		pthread_mutex_unlock(&mutexWORK);
 
-	}while (index > -1 || local_active_in > 0);
+	} while (index > -1 || local_active_in > 0);
 
 	pthread_mutex_lock(&mutexWORK);
 	active_work--;
@@ -214,13 +220,18 @@ void *OUT_thread(void *param){
 
 		
 	do{
+
 		pthread_mutex_lock(&mutexWORK);
 		index = first_out_item_in_buffer();
-		
+
 		if (index > -1){
 			offset = result[index].offset;
 			curr = result[index].data;
 
+
+			if(is_buffer_empty()) {
+				thread_sleep();
+			}
 			// critical section for writing to file 
 			pthread_mutex_lock(&mutexOUT);
 			if (fseek(file_out, result[index].offset, SEEK_SET) == -1) {
